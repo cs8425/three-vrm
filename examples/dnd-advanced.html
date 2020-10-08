@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>three-vrm example</title>
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no"
+		/>
+		<style>
+			body {
+				margin: 0;
+			}
+			canvas {
+				display: block;
+			}
+			#meta {
+				position: fixed;
+				bottom: 0;
+				left: 0;
+				margin: 1rem;
+				color: rgba(255, 255, 255, 0.5);
+			}
+			#meta-text a {
+				color: inherit;
+				text-decoration: underline;
+				cursor: pointer;
+			}
+			#thumbnail {
+				display: none;
+				position: absolute;
+				top: 0;
+				right: 0;
+			}
+		</style>
+	</head>
+
+	<body>
+		<div id="meta">
+			<span id="meta-text"></span>
+			<img id="thumbnail" alt="thumbnail" />
+		</div>
+		<script src="https://unpkg.com/three@0.120.1/build/three.js"></script>
+		<script src="https://unpkg.com/three@0.120.1/examples/js/loaders/GLTFLoader.js"></script>
+		<script src="https://unpkg.com/three@0.120.1/examples/js/controls/OrbitControls.js"></script>
+		<script src="https://unpkg.com/stats-js@1.0.1/build/stats.min.js"></script>
+		<script src="https://unpkg.com/dat.gui@0.7.7/build/dat.gui.min.js"></script>
+		<script src="../lib/three-vrm.js"></script>
+		<script>
+			// fps
+			const stats = new Stats();
+			stats.showPanel( 1 ); // 0: fps, 1: ms, 2: mb, 3+: custom
+			document.body.appendChild( stats.dom );
+
+			// renderer
+			const renderer = new THREE.WebGLRenderer( { antialias: true });
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			renderer.setPixelRatio( window.devicePixelRatio );
+			document.body.appendChild( renderer.domElement );
+
+			// camera
+			const camera = new THREE.PerspectiveCamera( 30.0, window.innerWidth / window.innerHeight, 0.1, 20.0 );
+			camera.position.set( 0.0, 1.0, 5.0 );
+
+			// camera controls
+			const controls = new THREE.OrbitControls( camera, renderer.domElement );
+			controls.screenSpacePanning = true;
+			controls.target.set( 0.0, 1.0, 0.0 );
+			controls.update();
+
+			// scene
+			const scene = new THREE.Scene();
+
+			// light
+			const light = new THREE.DirectionalLight( 0xffffff );
+			light.position.set( 1.0, 1.0, 1.0 ).normalize();
+			scene.add( light );
+
+			// gltf and vrm
+			let currentVrm = undefined;
+			let currentMixer = undefined;
+			let blobUrl = undefined;
+			let vrmLoader = THREE.VRM;
+			const loader = new THREE.GLTFLoader();
+
+			function load( url ) {
+
+				loader.crossOrigin = 'anonymous';
+				loader.load(
+
+					url,
+
+					( gltf ) => {
+
+						THREE.VRMUtils.removeUnnecessaryJoints( gltf.scene );
+
+						vrmLoader.from( gltf ).then( ( vrm ) => {
+
+							if ( currentVrm ) {
+
+								scene.remove( currentVrm.scene );
+								currentVrm.dispose();
+
+							}
+
+							currentVrm = vrm;
+							scene.add( vrm.scene );
+
+							vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.Hips ).rotation.y = Math.PI;
+
+							console.log( vrm );
+
+							SetupGUI();
+							SetupMeta(vrm);
+							blobUrl = url;
+						} );
+
+					},
+
+					( progress ) => console.log( 'Loading model...', 100.0 * ( progress.loaded / progress.total ), '%' ),
+
+					( error ) => console.error( error )
+
+				);
+
+			}
+
+			load( './models/three-vrm-girl.vrm' );
+
+			// helpers
+			const helpers = new THREE.Object3D();
+			helpers.add( new THREE.GridHelper( 10, 10 ) );
+			helpers.add( new THREE.AxesHelper( 5 ) );
+			scene.add( helpers );
+
+			// animate
+			const clock = new THREE.Clock();
+			clock.start();
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				stats.begin();
+				let deltaTime = clock.getDelta();
+				if ( currentVrm ) { currentVrm.update( deltaTime ); }
+				if ( currentMixer ) { currentMixer.update( deltaTime ); }
+				renderer.render( scene, camera );
+				stats.end();
+
+			}
+
+			animate();
+
+			window.addEventListener( 'resize', function ( event ) {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}, false );
+
+			// dnd handler
+			window.addEventListener( 'dragover', function( event ) {
+
+				event.preventDefault();
+
+			} );
+
+			window.addEventListener( 'drop', function( event ) {
+
+				event.preventDefault();
+
+				// read given file then convert it to blob url
+				const files = event.dataTransfer.files;
+				if ( !files ) { return; }
+				const file = files[0];
+				if ( !file ) { return; }
+				const blob = new Blob( [ file ], { type: "application/octet-stream" } );
+				blobUrl = URL.createObjectURL( blob );
+
+				switch (file.name.split('.').pop()) {
+					case 'vrm': {
+						load( blobUrl );
+						break;
+					}
+					case 'vmd': {
+						//loadVMD(blobUrl); // TODO
+						break;
+					}
+				}
+			} );
+
+			// setting
+			let gui = new dat.GUI();
+			let data = {
+				background: "#212121",
+				isAxesVisible: true,
+				isSkeletonVisible: false,
+				timeScale: 1.0,
+				positionX: 0,
+				positionY: 0,
+				positionZ: 0,
+				rotationX: 0,
+				rotationY: 0,
+				rotationZ: 0,
+				scaleX: 1.0,
+				scaleY: 1.0,
+				scaleZ: 1.0,
+				resetTransform: resetTransform,
+
+				vrmDebug: false,
+				materialDebug: 0,
+			};
+			let state = Object.assign({}, data);
+			gui.remember(data);
+
+			function SetupGUI() {
+				gui.destroy();
+
+				gui = new dat.GUI();
+				gui.remember(data);
+
+				let env = gui.addFolder('Environment');
+				env.addColor(data, 'background').name('Background').onChange(onDataUpdate);
+				env.add(data, 'isAxesVisible').name('Axes').onChange(onDataUpdate);
+				env.add(data, 'isSkeletonVisible').name('Skeleton').onChange(onDataUpdate);
+				env.add(data, 'timeScale', 0, 2, 0.01).name('Time Scale').onChange(onDataUpdate);
+
+				let dbg = gui.addFolder('Debug');
+				dbg.add(data, 'vrmDebug').name('Debug Mode').onChange(onDataUpdate);
+				dbg.add(data, 'materialDebug', { 'None': 0, 'Normal': 1, 'LitShadeRate': 2, 'UV': 3 } ).name('Debug Material').onChange(onDataUpdate);
+
+				let trans = gui.addFolder('Transform');
+				trans.add(data, 'positionX', -2.5, 2.5, 0.01).name('Position X').onChange(onDataUpdate).listen();
+				trans.add(data, 'positionY', -2.5, 2.5, 0.01).name('Position Y').onChange(onDataUpdate).listen();
+				trans.add(data, 'positionZ', -2.5, 2.5, 0.01).name('Position Z').onChange(onDataUpdate).listen();
+				trans.add(data, 'rotationX', -Math.PI, Math.PI, 0.5*Math.PI/180.0).name('Rotation X').onChange(onDataUpdate).listen();
+				trans.add(data, 'rotationY', -Math.PI, Math.PI, 0.5*Math.PI/180.0).name('Rotation Y').onChange(onDataUpdate).listen();
+				trans.add(data, 'rotationZ', -Math.PI, Math.PI, 0.5*Math.PI/180.0).name('Rotation Z').onChange(onDataUpdate).listen();
+				trans.add(data, 'scaleX', 0.01, 2, 0.01).name('scale X').onChange(onDataUpdate).listen();
+				trans.add(data, 'scaleY', 0.01, 2, 0.01).name('scale Y').onChange(onDataUpdate).listen();
+				trans.add(data, 'scaleZ', 0.01, 2, 0.01).name('scale Z').onChange(onDataUpdate).listen();
+				trans.add(data, 'resetTransform');
+
+				let blendShape = gui.addFolder('Blend Shape Group');
+				for (let e in currentVrm.blendShapeProxy.blendShapePresetMap) {
+					let name = currentVrm.blendShapeProxy.blendShapePresetMap[e];
+					data['blendShape-' + e] = 0.0;
+					blendShape.add(data, 'blendShape-' + e, 0, 1, 0.01).name(name).onChange(onDataUpdate);
+				}
+
+				onDataUpdate();
+			}
+
+			function onDataUpdate() {
+				if (data.background !== state.background) {
+					scene.background = new THREE.Color(data.background);
+				}
+
+				if (data.isAxesVisible !== state.isAxesVisible) {
+					helpers.visible = data.isAxesVisible;
+				}
+
+				if (data.isSkeletonVisible !== state.isSkeletonVisible) {
+					skeletonHelpers.visible = data.isSkeletonVisible;
+				}
+
+				var blendShape = currentVrm.blendShapeProxy;
+				for (var e in blendShape.blendShapePresetMap) {
+					blendShape.setValue( e, state['blendShape-' + e] );
+				}
+
+				if (data.positionX !== state.positionX) {
+					currentVrm.scene.position.setX(data.positionX);
+				}
+				if (data.positionY !== state.positionY) {
+					currentVrm.scene.position.setY(data.positionY);
+				}
+				if (data.positionZ !== state.positionZ) {
+					currentVrm.scene.position.setZ(data.positionZ);
+				}
+
+				if (
+					data.rotationX !== state.rotationX ||
+					data.rotationY !== state.rotationY ||
+					data.rotationZ !== state.rotationZ
+				) {
+					currentVrm.scene.setRotationFromEuler(
+						new THREE.Euler(data.rotationX, data.rotationY, data.rotationZ, 'YXZ')
+					);
+				}
+
+				if (data.scaleX !== state.scaleX) {
+					currentVrm.scene.scale.setX(data.scaleX);
+				}
+				if (data.scaleY !== state.scaleY) {
+					currentVrm.scene.scale.setY(data.scaleY);
+				}
+				if (data.scaleZ !== state.scaleZ) {
+					currentVrm.scene.scale.setZ(data.scaleZ);
+				}
+
+				if (data.materialDebug !== state.materialDebug) {
+					let debugMode = parseInt(data.materialDebug);
+					let setMToonDebugMode = function ( material, mode ) {
+						if ( material.isMToonMaterial )  material.debugMode = mode;
+					}
+					currentVrm.scene.traverse( ( object ) => {
+						if ( object.material ) {
+							if ( Array.isArray( object.material ) ) {
+								object.material.forEach( ( material ) => setMToonDebugMode( material, debugMode ) );
+							} else {
+								setMToonDebugMode( object.material, debugMode );
+							}
+						}
+					} );
+				}
+
+				if (data.vrmDebug !== state.vrmDebug) {
+					scene.remove( currentVrm.scene );
+					currentVrm.dispose();
+					
+					vrmLoader = (data.vrmDebug)? THREE.VRMDebug : THREE.VRM;
+					load( blobUrl );
+				}
+
+				state = Object.assign({}, data);
+			}
+
+			function resetTransform() {
+				data.positionX = 0;
+				data.positionY = 0;
+				data.positionZ = 0;
+				data.rotationX = 0;
+				data.rotationY = 0;
+				data.rotationZ = 0;
+				data.scaleX = 1.0;
+				data.scaleY = 1.0;
+				data.scaleZ = 1.0;
+				onDataUpdate();
+			}
+
+			// print all meta
+			function SetupMeta(vrm) {
+
+				// print meta fields
+				//var info = '';
+				//Object.keys( vrm.meta ).forEach( ( key ) => {
+				//	info += key + ' : ' + vrm.meta[ key ] + '\n';
+				//} );
+				//ele.innerText = info;
+
+				let ele = document.getElementById( 'meta-text' );
+				if (vrm.meta.contactInformation) {
+					let a = document.createElement('a');
+					a.title = vrm.meta.title;
+					a.href = vrm.meta.contactInformation;
+					ele.appendChild(a);
+					ele = a;
+				}
+				ele.innerText = vrm.meta.title + ' by ' + vrm.meta.author;
+
+
+				// show thumbnail
+				//THREE.VRMUtils.extractThumbnailBlob( renderer, vrm, 192 ).then( ( blob ) => {
+				//	const url = URL.createObjectURL( blob );
+				//	var ele = document.getElementById( 'thumbnail' );
+				//	ele.src = url;
+				//	ele.style.display = '';
+				//} );
+			}
+
+		</script>
+	</body>
+</html>
